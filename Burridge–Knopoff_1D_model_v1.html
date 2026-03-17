@@ -80,18 +80,18 @@
         <div class="control-group">
             <label>ブロック数 (N)</label>
             <select id="select_N">
-                <option value="10">10個 (標準)</option>
-                <option value="20">20個 (高解像度)</option>
-                <option value="40">40個 (超高解像度)</option>
+                <option value="10">10個</option>
+                <option value="20">20個</option>
+                <option value="40">40個</option>
             </select>
         </div>
         <div class="control-group">
-            <label>アスペリティ分布プリセット</label>
+            <label>アスペリティ分布</label>
             <select id="preset_select">
-                <option value="random">ランダム（不均質断層）</option>
-                <option value="center">中央巨大アスペリティ</option>
-                <option value="twin">双子アスペリティ（連動型想定）</option>
-                <option value="weak">全体的に弱い断層（クリープ）</option>
+                <option value="random">ランダム（不均質）</option>
+                <option value="center">単一アスペリティ</option>
+                <option value="twin">双子アスペリティ（連動型）</option>
+                <option value="weak">全体的に弱い断層</option>
             </select>
         </div>
         <div class="control-group">
@@ -103,11 +103,11 @@
             <input type="range" id="slider_window" min="50" max="500" step="10" value="150">
         </div>
         <div class="control-group">
-            <label>同一地震の判定猶予 (閾値:ms) <span id="val_timeout">0.10</span></label>
+            <label>同一地震の判定猶予時間 (閾値:ms) <span id="val_timeout">0.10</span></label>
             <input type="range" id="slider_timeout" min="0.05" max="2.0" step="0.05" value="0.10">
         </div>
         <div class="control-group checkbox-group">
-            <label><input type="checkbox" id="check_show_mag" checked> 時空間グラフにM値表示</label>
+            <label><input type="checkbox" id="check_show_mag" checked> 時空間グラフにMw表示</label>
         </div>
         
         <div class="btn-group">
