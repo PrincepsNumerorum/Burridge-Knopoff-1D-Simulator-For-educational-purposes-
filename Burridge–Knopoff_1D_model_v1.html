@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>バネ・ブロックモデル地震シミュレータ</title>
+<style>
+    :root {
+        --bg: #1e1e2e; --text: #cdd6f4; --panel: #313244;
+        --accent: #a6e3a1; --accent-hover: #94e2d5;
+        --danger: #f38ba8; --slip: #f9e2af; --energy: #89b4fa;
+        --csv: #89dceb; /* CSVボタン用の色 */
+    }
+    body {
+        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        background-color: var(--bg); color: var(--text);
+        margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center;
+    }
+    h1 { margin-top: 0; font-size: 1.5rem; text-align: center; }
+    .container { display: flex; flex-direction: column; gap: 15px; max-width: 950px; width: 100%; }
+    .canvas-container {
+        background-color: #11111b; border-radius: 12px; padding: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.3); position: relative;
+    }
+    .graph-stack {
+        display: flex; flex-direction: column; gap: 5px;
+    }
+    canvas { display: block; width: 100%; border-radius: 8px; background-color: #181825; cursor: crosshair; }
+    .controls {
+        background-color: var(--panel); padding: 20px; border-radius: 12px;
+        display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; align-items: center;
+    }
+    .control-group { display: flex; flex-direction: column; gap: 8px; }
+    label { font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
+    input[type=range] { width: 100%; cursor: pointer; }
+    select {
+        background-color: #181825; color: var(--text); border: 1px solid #45475a;
+        padding: 8px; border-radius: 6px; outline: none; cursor: pointer;
+    }
+    .checkbox-group label {
+        display: flex; justify-content: flex-start; gap: 10px; cursor: pointer; font-size: 0.9rem;
+    }
+    .checkbox-group input[type=checkbox] { width: auto; transform: scale(1.3); cursor: pointer; }
+    .btn-group { grid-column: 1 / -1; display: flex; gap: 10px; flex-wrap: wrap;}
+    button {
+        flex: 1; min-width: 200px; background-color: var(--accent); color: #11111b; border: none;
+        padding: 12px; font-size: 0.95rem; font-weight: bold; border-radius: 8px; cursor: pointer; transition: background 0.2s;
+    }
+    button:hover { filter: brightness(1.1); }
+    #btn_pause { background-color: var(--danger); color: #fff; }
+    #btn_export { background-color: var(--csv); color: #11111b; }
+    .description { background-color: var(--panel); padding: 15px; border-radius: 12px; font-size: 0.9rem; line-height: 1.6; }
+    .highlight { color: #f9e2af; font-weight: bold; }
+    .section-title { font-size: 1rem; margin-bottom: 5px; color: var(--accent); border-bottom: 1px solid #45475a; padding-bottom: 5px;}
+</style>
+</head>
+<body>
+
+<div class="container">
+    <h1>バネ・ブロックモデル地震シミュレータ</h1>
+    
+    <div class="canvas-container">
+        <div class="section-title">バネ・ブロックモデル</div>
+        <canvas id="simCanvas" width="900" height="320"></canvas>
+    </div>
+
+    <div class="canvas-container">
+        <div class="section-title">震源域の時空間分布（震央と連動範囲）</div>
+        <canvas id="spaceTimeCanvas" width="900" height="250"></canvas>
+    </div>
+
+    <div class="canvas-container graph-stack">
+        <div class="section-title">時系列解析 (エネルギー / すべり量 / M-T図)</div>
+        <canvas id="energyCanvas" width="900" height="120" title="全歪みエネルギー"></canvas>
+        <canvas id="slipCanvas" width="900" height="120" title="累積すべり量"></canvas>
+        <canvas id="mtCanvas" width="900" height="180" title="M-T図・イベントログ"></canvas>
+    </div>
+
+    <div class="controls">
+        <div class="control-group">
+            <label>ブロック数 (N)</label>
+            <select id="select_N">
+                <option value="10">10個 (標準)</option>
+                <option value="20">20個 (高解像度)</option>
+                <option value="40">40個 (超高解像度)</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>アスペリティ分布プリセット</label>
+            <select id="preset_select">
+                <option value="random">ランダム（不均質断層）</option>
+                <option value="center">中央巨大アスペリティ</option>
+                <option value="twin">双子アスペリティ（連動型想定）</option>
+                <option value="weak">全体的に弱い断層（クリープ）</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label>プレート沈み込み速度 (V) <span id="val_V">0.10</span></label>
+            <input type="range" id="slider_V" min="0.01" max="2.0" step="0.01" value="0.10">
+        </div>
+        <div class="control-group">
+            <label>グラフ表示幅（時間スケール） <span id="val_window">150</span></label>
+            <input type="range" id="slider_window" min="50" max="500" step="10" value="150">
+        </div>
+        <div class="control-group">
+            <label>同一地震の判定猶予 (閾値:ms) <span id="val_timeout">0.10</span></label>
+            <input type="range" id="slider_timeout" min="0.05" max="2.0" step="0.05" value="0.10">
+        </div>
+        <div class="control-group checkbox-group">
+            <label><input type="checkbox" id="check_show_mag" checked> 時空間グラフにM値表示</label>
+        </div>
+        
+        <div class="btn-group">
+            <button id="btn_apply">設定を適用してリセット</button>
+            <button id="btn_pause">一時停止 / 再開 (アスペリティ編集)</button>
+            <button id="btn_export">地震履歴をCSV出力</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    const simCanvas = document.getElementById('simCanvas'); const simCtx = simCanvas.getContext('2d');
+    const stCanvas = document.getElementById('spaceTimeCanvas'); const stCtx = stCanvas.getContext('2d');
+    const energyCanvas = document.getElementById('energyCanvas'); const energyCtx = energyCanvas.getContext('2d');
+    const slipCanvas = document.getElementById('slipCanvas'); const slipCtx = slipCanvas.getContext('2d');
+    const mtCanvas = document.getElementById('mtCanvas'); const mtCtx = mtCanvas.getContext('2d');
+
+    // 物理パラメータ群
+    let N = 10;
+    let V = 0.1;
+    let k = 15.0;
+    let K = 2.0;
+    
+    // 定数としての摩擦力（Fs/Fd）
+    let baseFs = 15.0;
+    const baseFdRatio = 0.4;
+    const radiationDamping = 1.5;
+    const mu_Area = 3e15; // Mw計算用のモーメント較正係数
+    
+    const dt = 0.005;
+    const subSteps = 10;
+    
+    let blocks = [];
+    let time = 0;
+    let isPaused = false;
+    let totalCumulativeSlip = 0;
+
+    let energyHistory = [];
+    let maxVisibleEnergy = 1;
+    let graphTimeWindow = 150.0;
+    let eventTimeout = 0.1;
+    
+    let activeEvents = []; 
+    let eventHistory = [];
+    let allExportableEvents = []; // グラフ表示範囲外に消えたイベントもCSV用に全て保持する配列
+
+    const select_N = document.getElementById('select_N');
+    const slider_V = document.getElementById('slider_V');
+    const slider_window = document.getElementById('slider_window');
+    const slider_timeout = document.getElementById('slider_timeout');
+    const preset_select = document.getElementById('preset_select');
+    const btn_apply = document.getElementById('btn_apply');
+    const btn_pause = document.getElementById('btn_pause');
+    const btn_export = document.getElementById('btn_export');
+    const check_show_mag = document.getElementById('check_show_mag');
+
+    function updateLabels() {
+        document.getElementById('val_V').innerText = slider_V.value;
+        document.getElementById('val_window').innerText = slider_window.value;
+        document.getElementById('val_timeout').innerText = slider_timeout.value;
+    }
+
+    [slider_V, slider_window, slider_timeout].forEach(slider => {
+        slider.addEventListener('input', () => {
+            V = parseFloat(slider_V.value);
+            graphTimeWindow = parseFloat(slider_window.value);
+            eventTimeout = parseFloat(slider_timeout.value);
+            updateLabels();
+        });
+    });
+
+    select_N.addEventListener('change', initBlocks);
+
+    function updateBlockProps(b, targetFs) {
+        b.Fs = Math.max(3, Math.min(targetFs, 200)); 
+        b.Fd = b.Fs * baseFdRatio;
+        b.m = 0.5 + (b.Fs / 200.0) * 3.0; 
+    }
+
+    function initBlocks() {
+        N = parseInt(select_N.value);
+        blocks = [];
+        energyHistory = [];
+        eventHistory = [];
+        activeEvents = []; 
+        allExportableEvents = []; // CSV用履歴のリセット
+        time = 0;
+        totalCumulativeSlip = 0;
+        maxVisibleEnergy = 1;
+        
+        const mode = preset_select.value;
+
+        for(let i=0; i<N; i++) {
+            let b = { u: 0, w: 0, v: 0, isSliding: false, slip: 0 };
+            let initialFs = baseFs;
+            
+            if (mode === 'random') {
+                initialFs = baseFs + (Math.random() * baseFs * 2 - baseFs);
+            } else if (mode === 'center') {
+                let mid = Math.floor(N / 2);
+                initialFs = (i === mid || i === mid - 1) ? baseFs * 4.0 : baseFs * 0.5;
+            } else if (mode === 'twin') {
+                let q1 = Math.floor(N / 4);
+                let q3 = Math.floor(3 * N / 4);
+                initialFs = (Math.abs(i - q1) <= 1 || Math.abs(i - q3) <= 1) ? baseFs * 3.0 : baseFs * 0.5;
+            } else if (mode === 'weak') {
+                initialFs = baseFs * 0.3 + Math.random() * 2;
+            }
+            
+            updateBlockProps(b, initialFs);
+            blocks.push(b);
+        }
+    }
+
+    btn_apply.addEventListener('click', initBlocks);
+    btn_pause.addEventListener('click', () => {
+        isPaused = !isPaused;
+        btn_pause.innerText = isPaused ? "▶ 再開する" : "一時停止 / 再開 (アスペリティ編集)";
+        btn_pause.style.backgroundColor = isPaused ? "#a6e3a1" : "var(--danger)";
+    });
+
+    // --- CSVエクスポート機能 ---
+    btn_export.addEventListener('click', () => {
+        if (allExportableEvents.length === 0) {
+            alert("出力できる地震イベントがまだ発生していません。");
+            return;
+        }
+
+        // BOMを付与してExcelでの文字化けを防ぐ
+        let csvContent = "\uFEFFEvent_ID,Start_Time,End_Time,Duration,Epicenter,Involved_Blocks,Max_Slip,Total_Slip,Mw\n";
+        
+        allExportableEvents.forEach((ev, index) => {
+            let minB = Math.min(...ev.involvedBlocks);
+            let maxB = Math.max(...ev.involvedBlocks);
+            let involved = `${minB}-${maxB}`;
+            
+            let maxSlip = 0;
+            let totalSlip = 0;
+            ev.eventSlips.forEach(slip => {
+                if (slip > maxSlip) maxSlip = slip;
+                totalSlip += slip;
+            });
+
+            let duration = ev.endTime - ev.startTime;
+
+            let row = [
+                index + 1,
+                ev.startTime.toFixed(4),
+                ev.endTime.toFixed(4),
+                duration.toFixed(4),
+                ev.epicenter,
+                involved,
+                maxSlip.toFixed(6),
+                totalSlip.toFixed(6),
+                ev.magnitude.toFixed(2)
+            ];
+            csvContent += row.join(",") + "\n";
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.setAttribute("href", url);
+        link.setAttribute("download", `earthquake_history_N${N}_V${V.toFixed(2)}.csv`);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    });
+
+    function getSpacing() { return (simCanvas.width - 120) / Math.max(1, N - 1); }
+    function getStartX() { return 60; }
+    function getVisualSize(Fs, spacing) {
+        let maxV = spacing * 0.9;
+        let minV = spacing * 0.25;
+        return minV + (Fs / 200.0) * (maxV - minV);
+    }
+    function getDrawScale() { return Math.max(1.5, 5.0 * (10 / N)); }
+
+    simCanvas.addEventListener('mousedown', (e) => {
+        const rect = simCanvas.getBoundingClientRect();
+        const mouseX = e.clientX - rect.left;
+        const spacing = getSpacing();
+        const startX = getStartX();
+        const drawScale = getDrawScale();
+
+        for(let i=0; i<N; i++) {
+            let b = blocks[i];
+            let vSize = getVisualSize(b.Fs, spacing);
+            let blockX = startX + i * spacing - b.w * drawScale;
+            
+            if (mouseX >= blockX - 5 && mouseX <= blockX + vSize + 5) {
+                updateBlockProps(b, e.shiftKey ? b.Fs - 10 : b.Fs + 10);
+                if(isPaused) draw();
+                break;
+            }
+        }
+    });
+
+    // RK4用 導関数計算関数 (定数摩擦力モデル)
+    function getDerivatives(U, V_vel, current_t) {
+        let dU = new Float64Array(N);
+        let dV = new Float64Array(N);
+        
+        for(let i=0; i<N; i++) {
+            let b = blocks[i];
+            
+            if (!b.isSliding) {
+                dU[i] = 0;
+                dV[i] = 0;
+            } else {
+                dU[i] = V_vel[i];
+                let u_i = U[i];
+                let f_drive = K * (V * current_t - u_i);
+                let f_left = (i > 0) ? k * (U[i-1] - u_i) : 0;
+                let f_right = (i < N - 1) ? k * (U[i+1] - u_i) : 0;
+                let F_spring = f_drive + f_left + f_right;
+                let accel = (F_spring - b.Fd - radiationDamping * V_vel[i]) / b.m;
+                dV[i] = accel;
+            }
+        }
+        return { dU, dV };
+    }
+
+    function updatePhysics() {
+        if (isPaused) return;
+
+        // 1. スリップ開始判定
+        for(let i=0; i<N; i++) {
+            let b = blocks[i];
+            if (!b.isSliding) {
+                let f_drive = K * (V * time - b.u);
+                let f_left = (i > 0) ? k * (blocks[i-1].u - b.u) : 0;
+                let f_right = (i < N - 1) ? k * (blocks[i+1].u - b.u) : 0;
+                let F_spring = f_drive + f_left + f_right;
+                
+                if (F_spring > b.Fs) {
+                    b.isSliding = true;
+                    b.v = 1e-5; 
+                }
+            }
+        }
+
+        let U = blocks.map(b => b.u);
+        let V_vel = blocks.map(b => b.v);
+
+        // 2. 4次Runge-Kutta法 (RK4)
+        let k1 = getDerivatives(U, V_vel, time);
+        let U2 = U.map((u, i) => u + 0.5 * dt * k1.dU[i]);
+        let V2 = V_vel.map((v, i) => Math.max(0, v + 0.5 * dt * k1.dV[i]));
+        let k2 = getDerivatives(U2, V2, time + 0.5 * dt);
+        
+        let U3 = U.map((u, i) => u + 0.5 * dt * k2.dU[i]);
+        let V3 = V_vel.map((v, i) => Math.max(0, v + 0.5 * dt * k2.dV[i]));
+        let k3 = getDerivatives(U3, V3, time + 0.5 * dt);
+        
+        let U4 = U.map((u, i) => u + dt * k3.dU[i]);
+        let V4 = V_vel.map((v, i) => Math.max(0, v + dt * k3.dV[i]));
+        let k4 = getDerivatives(U4, V4, time + dt);
+
+        let incrementalSlipTotal = 0;
+        let slidingIndices = [];
+        let totalEnergy = 0;
+        let blockStepSlip = new Float64Array(N);
+
+        // 3. RK4結果の適用
+        for(let i=0; i<N; i++) {
+            let b = blocks[i];
+            if (b.isSliding) {
+                let dU_final = (dt/6) * (k1.dU[i] + 2*k2.dU[i] + 2*k3.dU[i] + k4.dU[i]);
+                b.u += dU_final;
+                let dV_final = (dt/6) * (k1.dV[i] + 2*k2.dV[i] + 2*k3.dV[i] + k4.dV[i]);
+                b.v += dV_final;
+                
+                blockStepSlip[i] = dU_final;
+                b.slip += dU_final;
+                incrementalSlipTotal += dU_final;
+                slidingIndices.push(i);
+                
+                if (b.v <= 0) {
+                    b.isSliding = false;
+                    b.v = 0;
+                }
+            }
+            
+            b.w = V * (time + dt) - b.u;
+            totalEnergy += 0.5 * K * b.w * b.w;
+            if(i < N - 1) {
+                let diff = b.u - blocks[i+1].u; 
+                totalEnergy += 0.5 * k * diff * diff;
+            }
+        }
+        
+        totalCumulativeSlip += (incrementalSlipTotal / N);
+
+        // 4. イベント・クラスタリング
+        if (slidingIndices.length > 0) {
+            for (let i of slidingIndices) {
+                let matchedEvents = [];
+                for (let ev of activeEvents) {
+                    if (ev.involvedBlocks.has(i) || ev.involvedBlocks.has(i - 1) || ev.involvedBlocks.has(i + 1)) {
+                        matchedEvents.push(ev);
+                    }
+                }
+
+                let targetEvent;
+                if (matchedEvents.length === 0) {
+                    targetEvent = {
+                        startTime: time,
+                        lastActiveTime: time,
+                        epicenter: i,
+                        involvedBlocks: new Set([i]),
+                        eventSlips: new Map()
+                    };
+                    activeEvents.push(targetEvent);
+                } else {
+                    targetEvent = matchedEvents[0];
+                    for (let j = 1; j < matchedEvents.length; j++) {
+                        let evToMerge = matchedEvents[j];
+                        evToMerge.involvedBlocks.forEach(b_idx => targetEvent.involvedBlocks.add(b_idx));
+                        evToMerge.eventSlips.forEach((val, key) => {
+                            targetEvent.eventSlips.set(key, (targetEvent.eventSlips.get(key) || 0) + val);
+                        });
+                        
+                        if (evToMerge.startTime < targetEvent.startTime) {
+                            targetEvent.startTime = evToMerge.startTime;
+                            targetEvent.epicenter = evToMerge.epicenter;
+                        }
+                        let idx = activeEvents.indexOf(evToMerge);
+                        if (idx !== -1) activeEvents.splice(idx, 1);
+                    }
+                    targetEvent.involvedBlocks.add(i);
+                    targetEvent.lastActiveTime = time;
+                }
+                targetEvent.eventSlips.set(i, (targetEvent.eventSlips.get(i) || 0) + blockStepSlip[i]);
+            }
+        }
+
+        // イベント終息判定と Mw計算、およびCSV用配列への保存
+        for (let j = activeEvents.length - 1; j >= 0; j--) {
+            let ev = activeEvents[j];
+            if (time - ev.lastActiveTime > eventTimeout) {
+                ev.endTime = ev.lastActiveTime;
+                
+                let totalEventSlip = 0;
+                ev.eventSlips.forEach(val => totalEventSlip += val);
+                
+                let M0 = mu_Area * totalEventSlip; 
+                
+                if (totalEventSlip > 0.005) {
+                    ev.magnitude = (2.0 / 3.0) * (Math.log10(M0) - 9.1);
+                    ev.magnitude = Math.max(0, ev.magnitude);
+                } else {
+                    ev.magnitude = 0;
+                }
+                
+                eventHistory.push(ev);
+                allExportableEvents.push(ev); // CSV用にグラフから消えても保持する
+                activeEvents.splice(j, 1); 
+            }
+        }
+
+        energyHistory.push({ t: time, e: totalEnergy, slip: totalCumulativeSlip });
+        
+        let startTimeWindow = time - graphTimeWindow;
+        while(energyHistory.length > 0 && energyHistory[0].t < startTimeWindow - graphTimeWindow * 0.5) {
+            energyHistory.shift();
+        }
+        // eventHistory はグラフ描画用のため古いものを消すが、allExportableEvents はそのまま維持
+        while(eventHistory.length > 0 && eventHistory[0].endTime < startTimeWindow - graphTimeWindow * 0.5) {
+            eventHistory.shift();
+        }
+
+        time += dt;
+    }
+
+    function drawSpring(ctx, x1, y1, x2, y2, coils, radius, color) { 
+        let dx = x2 - x1; let dy = y2 - y1; let dist = Math.hypot(dx, dy); let angle = Math.atan2(dy, dx);
+        ctx.save(); ctx.translate(x1, y1); ctx.rotate(angle); ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.lineJoin = 'round';
+        ctx.beginPath(); ctx.moveTo(0, 0); let coilLen = dist / (coils + 1);
+        for(let i=0; i<coils; i++) { let sign = (i % 2 === 0) ? 1 : -1; ctx.lineTo(coilLen * (i + 0.5), radius * sign); }
+        ctx.lineTo(dist, 0); ctx.stroke(); ctx.restore();
+    }
+
+    function draw() {
+        const spacing = getSpacing();
+        const startX = getStartX();
+        const drawScale = getDrawScale();
+        const startTimeWindow = Math.max(0, time - graphTimeWindow);
+
+        simCtx.clearRect(0, 0, simCanvas.width, simCanvas.height);
+        const plateY = 40; const faultY = 260; 
+
+        simCtx.fillStyle = '#313244'; simCtx.fillRect(0, faultY, simCanvas.width, simCanvas.height - faultY);
+        simCtx.strokeStyle = '#45475a'; simCtx.lineWidth = 2;
+        let offset = isPaused ? 0 : -(time * V * drawScale) % 40;
+        for(let x = offset; x < simCanvas.width; x += 40) {
+            simCtx.beginPath(); simCtx.moveTo(x, faultY); simCtx.lineTo(x - 20, simCanvas.height); simCtx.stroke();
+        }
+        simCtx.fillStyle = '#4c4f69'; simCtx.fillRect(0, 0, simCanvas.width, plateY);
+
+        let fontSize = N >= 40 ? 8 : (N >= 20 ? 10 : 12);
+        let springRadius = Math.min(4, spacing * 0.15);
+
+        for(let i=0; i<N; i++) {
+            let b = blocks[i];
+            let vSize = getVisualSize(b.Fs, spacing);
+            let blockX = startX + i * spacing - b.w * drawScale;
+            let blockY = faultY - vSize;
+            
+            drawSpring(simCtx, startX + i * spacing, plateY, blockX + vSize/2, blockY, 6, springRadius, '#585b70');
+            if (i < N - 1) {
+                let nextB = blocks[i+1]; 
+                let nextVSize = getVisualSize(nextB.Fs, spacing);
+                let nextBlockX = startX + (i+1) * spacing - nextB.w * drawScale;
+                drawSpring(simCtx, blockX + vSize, blockY + vSize/2, nextBlockX, faultY - nextVSize + nextVSize/2, 4, springRadius, '#7f849c');
+            }
+        }
+
+        for(let i=0; i<N; i++) {
+            let b = blocks[i];
+            let vSize = getVisualSize(b.Fs, spacing);
+            let blockX = startX + i * spacing - b.w * drawScale;
+            let blockY = faultY - vSize;
+            
+            let intensity = Math.min(1, Math.max(0, (b.Fs - 5) / 100)); 
+            simCtx.fillStyle = `rgb(${Math.floor(200+55*intensity)}, ${Math.floor(150-100*intensity)}, ${Math.floor(150-100*intensity)})`;
+            simCtx.fillRect(blockX, blockY, vSize, vSize);
+            
+            if (b.isSliding) {
+                simCtx.strokeStyle = '#f9e2af'; simCtx.lineWidth = 2;
+                simCtx.strokeRect(blockX - 1, blockY - 1, vSize + 2, vSize + 2);
+            }
+            
+            let currentForce = K*b.w + ((i>0)?-k*(blocks[i-1].w-b.w):0) + ((i<N-1)?k*(b.w-blocks[i+1].w):0);
+            let ratio = Math.max(0, currentForce / b.Fs);
+            let gaugeHeight = N >= 40 ? 3 : 5;
+            let gaugeOffset = N >= 40 ? 8 : 12;
+            
+            simCtx.fillStyle = '#313244'; simCtx.fillRect(blockX, blockY - gaugeOffset, vSize, gaugeHeight);
+            simCtx.fillStyle = ratio > 0.9 ? '#f38ba8' : (ratio > 0.7 ? '#f9e2af' : '#a6e3a1');
+            simCtx.fillRect(blockX, blockY - gaugeOffset, vSize * Math.min(ratio, 1), gaugeHeight);
+            
+            simCtx.fillStyle = '#cdd6f4'; simCtx.font = `${fontSize}px sans-serif`; simCtx.textAlign = "center";
+            simCtx.fillText(N >= 40 ? `${i}` : `B${i}`, blockX + vSize/2, blockY - gaugeOffset - 4);
+        }
+
+        stCtx.clearRect(0, 0, stCanvas.width, stCanvas.height);
+        stCtx.strokeStyle = '#313244'; stCtx.lineWidth = 1;
+        for(let i=0; i<N; i++) {
+            stCtx.beginPath();
+            stCtx.moveTo(startX + i * spacing, 0);
+            stCtx.lineTo(startX + i * spacing, stCanvas.height);
+            stCtx.stroke();
+            if (N < 40 || i % 2 === 0) {
+                stCtx.fillStyle = '#585b70'; stCtx.font = `${fontSize}px sans-serif`; stCtx.textAlign = "center";
+                stCtx.fillText(N >= 40 ? `${i}` : `B${i}`, startX + i * spacing, 10);
+            }
+        }
+
+        function getStY(t) { return stCanvas.height - ((t - startTimeWindow) / graphTimeWindow) * stCanvas.height; }
+
+        const allCurrentEvents = [...eventHistory, ...activeEvents];
+        const showMagOnSt = check_show_mag.checked; 
+
+        for(let ev of allCurrentEvents) {
+            if ((ev.endTime || time) < startTimeWindow) continue;
+            let yBottom = getStY(ev.startTime);
+            let yTop = getStY(ev.endTime || time);
+            
+            let minB = Math.min(...ev.involvedBlocks);
+            let maxB = Math.max(...ev.involvedBlocks);
+            
+            let extend = spacing * 0.4;
+            let xLeft = startX + minB * spacing - extend;
+            let xRight = startX + maxB * spacing + extend;
+
+            let isMajor = ev.magnitude > 5.5;
+            
+            stCtx.fillStyle = isMajor ? 'rgba(243, 139, 168, 0.5)' : 'rgba(166, 227, 161, 0.4)';
+            stCtx.fillRect(xLeft, yTop, xRight - xLeft, Math.max(2, yBottom - yTop));
+
+            let epiX = startX + ev.epicenter * spacing;
+            stCtx.fillStyle = '#f38ba8';
+            stCtx.beginPath();
+            let markSize = N >= 40 ? 2.5 : 4;
+            stCtx.arc(epiX, yBottom, markSize, 0, Math.PI * 2);
+            stCtx.fill();
+
+            if (ev.endTime && ev.magnitude > 0 && showMagOnSt) {
+                stCtx.fillStyle = '#cdd6f4';
+                stCtx.font = "11px sans-serif";
+                stCtx.textAlign = "left";
+                stCtx.fillText(`M${ev.magnitude.toFixed(1)}`, epiX + 6, yBottom + 4);
+            }
+        }
+
+        function getSharedX(t) { return 60 + ((t - startTimeWindow) / graphTimeWindow) * (simCanvas.width - 120); }
+        function drawGraphFrame(ctx, label, labelColor) {
+            ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+            ctx.strokeStyle = '#45475a'; ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(60, 10); ctx.lineTo(60, ctx.canvas.height - 10); ctx.lineTo(ctx.canvas.width - 60, ctx.canvas.height - 10);
+            ctx.moveTo(ctx.canvas.width - 60, 10); ctx.lineTo(ctx.canvas.width - 60, ctx.canvas.height - 10);
+            ctx.stroke();
+            ctx.fillStyle = labelColor; ctx.font = "12px sans-serif"; ctx.textAlign = "left";
+            ctx.fillText(label, 10, 20);
+        }
+
+        drawGraphFrame(energyCtx, "全歪みエネルギー", '#ffffff');
+        drawGraphFrame(slipCtx, "累積すべり量(平均)", '#ffffff');
+        drawGraphFrame(mtCtx, "M-T図 / ログ", '#ffffff');
+
+        if(energyHistory.length > 0) {
+            maxVisibleEnergy = 1;
+            let minVisibleSlip = energyHistory[0].slip;
+            let maxVisibleSlip = energyHistory[energyHistory.length-1].slip;
+            for(let data of energyHistory) {
+                if (data.t >= startTimeWindow && data.e > maxVisibleEnergy) maxVisibleEnergy = data.e;
+            }
+            
+            let scaleEnergyY = (energyCanvas.height - 20) / maxVisibleEnergy;
+            let slipRange = Math.max(0.1, maxVisibleSlip - minVisibleSlip);
+            let scaleSlipY = (slipCanvas.height - 20) / slipRange;
+
+            energyCtx.strokeStyle = 'var(--energy)'; energyCtx.lineWidth = 2; energyCtx.beginPath();
+            let startedE = false;
+            for(let data of energyHistory) {
+                if (data.t < startTimeWindow) continue;
+                let x = getSharedX(data.t); let y = energyCanvas.height - 10 - data.e * scaleEnergyY;
+                if(!startedE) { energyCtx.moveTo(x, y); startedE = true; } else { energyCtx.lineTo(x, y); }
+            }
+            energyCtx.stroke();
+
+            slipCtx.strokeStyle = 'var(--slip)'; slipCtx.lineWidth = 2; slipCtx.beginPath();
+            let startedS = false;
+            for(let data of energyHistory) {
+                if (data.t < startTimeWindow) continue;
+                let x = getSharedX(data.t); let y = slipCanvas.height - 10 - (data.slip - minVisibleSlip) * scaleSlipY;
+                if(!startedS) { slipCtx.moveTo(x, y); startedS = true; } else { slipCtx.lineTo(x, y); }
+            }
+            slipCtx.stroke();
+        }
+
+        let textLogIndex = 0;
+        let maxMag = 8.5; 
+
+        for(let ev of allCurrentEvents) {
+            if ((ev.endTime || time) < startTimeWindow) continue;
+            let evStart = Math.max(startTimeWindow, ev.startTime);
+            let xStart = getSharedX(evStart); 
+            
+            let xEnd = Math.max(xStart + 2, getSharedX(ev.endTime || time));
+            mtCtx.fillStyle = 'rgba(69, 71, 90, 0.4)';
+            mtCtx.fillRect(xStart, 10, xEnd - xStart, mtCanvas.height - 20);
+
+            if (ev.endTime && ev.magnitude > 0) {
+                let magY = mtCanvas.height - 10 - (ev.magnitude / maxMag) * (mtCanvas.height - 20);
+                
+                mtCtx.strokeStyle = ev.magnitude > 6 ? '#f38ba8' : '#a6e3a1';
+                mtCtx.lineWidth = 2;
+                mtCtx.beginPath();
+                mtCtx.moveTo(xStart, mtCanvas.height - 10);
+                mtCtx.lineTo(xStart, Math.max(10, magY));
+                mtCtx.stroke();
+                
+                mtCtx.fillStyle = ev.magnitude > 6 ? '#f38ba8' : '#a6e3a1';
+                mtCtx.beginPath();
+                mtCtx.arc(xStart, Math.max(10, magY), ev.magnitude > 6 ? 4 : 2, 0, Math.PI * 2);
+                mtCtx.fill();
+
+                let yOffset = (textLogIndex % 4) * 14; 
+                let minB = Math.min(...ev.involvedBlocks); let maxB = Math.max(...ev.involvedBlocks);
+                let text = `M${ev.magnitude.toFixed(1)} [${minB}-${maxB}]`;
+                
+                mtCtx.fillStyle = '#cdd6f4'; mtCtx.textAlign = "center"; mtCtx.font = "10px sans-serif";
+                mtCtx.fillText(text, xStart, 25 + yOffset);
+                textLogIndex++;
+            }
+        }
+    }
+
+    function animate() {
+        for(let step=0; step<subSteps; step++) { updatePhysics(); }
+        draw(); requestAnimationFrame(animate);
+    }
+
+    initBlocks();
+    updateLabels();
+    animate();
+</script>
+
+</body>
+</html>
