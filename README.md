@@ -1,5 +1,3 @@
----
-
 # Burridge-Knopoff 1D Model Simulator
 
 ---
