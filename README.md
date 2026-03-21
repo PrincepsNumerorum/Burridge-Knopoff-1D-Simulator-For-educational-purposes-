@@ -2,8 +2,6 @@
 
 # Burridge-Knopoff 1D Model Simulator
 
-**Play the Simulator / ブラウザで実行:** [https://princepsnumerorum.github.io/Burridge-Knopoff-1D-Simulator-For-educational-purposes-/](https://princepsnumerorum.github.io/Burridge-Knopoff-1D-Simulator-For-educational-purposes-/)
-
 ---
 
 ## English
